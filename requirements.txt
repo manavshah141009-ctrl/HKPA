@@ -1,0 +1,42 @@
+# ============================================================
+# Global Background Dictation Assistant - Requirements
+# ============================================================
+# INSTALLATION ORDER:
+#
+# Step 1: Install PyTorch (skip if already done from app.py setup)
+#   With NVIDIA GPU (CUDA 12.1):
+#     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+#   CPU only:
+#     pip install torch torchvision torchaudio
+#
+# Step 2: Install all other packages:
+#     pip install -r requirements.txt
+#
+# NOTE: keyboard library may require running as Administrator on
+#       some Windows configurations for global hotkey hooks.
+# ============================================================
+
+# --- Core Transcription Engine ---
+faster-whisper==1.1.1
+
+# --- Audio Capture ---
+sounddevice==0.5.1
+numpy==1.26.4
+
+# --- GUI Framework (for optional Status Window) ---
+customtkinter==5.2.2
+
+# --- HTTP client (required by faster-whisper internally) ---
+requests>=2.31.0
+
+# --- System Tray Integration ---
+pystray==0.19.5
+
+# --- Image generation for tray icon ---
+Pillow>=10.0.0
+
+# --- Global Keyboard Hooks & Simulation ---
+keyboard==0.13.5
+
+# --- Clipboard Access (save, paste, restore) ---
+pyperclip==1.9.0

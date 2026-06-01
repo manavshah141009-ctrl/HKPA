@@ -1,0 +1,7 @@
+{
+  "hotkey": "ctrl+alt+v",
+  "model_size_gpu": "small.en",
+  "model_size_cpu": "base.en",
+  "audio_segment_sec": 3.5,
+  "clipboard_delay": 0.8
+}

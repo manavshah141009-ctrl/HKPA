@@ -1,0 +1,48 @@
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+
+# ── Virtual Environment ────────────────────────────────────
+venv/
+env/
+.env/
+.venv/
+ENV/
+
+# ── User Config (personal preferences, not for sharing) ───
+config.json
+
+# ── Whisper Model Cache ───────────────────────────────────
+# Models are downloaded automatically on first run (~240MB)
+# No need to commit them
+.cache/
+models/
+
+# ── IDE / Editor ──────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ── Windows ───────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ── Logs & Temp ───────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+
+# ── OS ────────────────────────────────────────────────────
+.DS_Store
