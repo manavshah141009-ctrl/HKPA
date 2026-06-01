@@ -35,8 +35,20 @@ pystray==0.19.5
 # --- Image generation for tray icon ---
 Pillow>=10.0.0
 
-# --- Global Keyboard Hooks & Simulation ---
+# --- Hotkey Support (Global Keyboard Shortcuts) ---
+# keyboard allows registering global hotkeys that work even when
+# the app window is not in focus.
 keyboard==0.13.5
+
+# --- Mouse & Keyboard Automation (Voice Commands) ---
+# pyautogui enables programmatic mouse movement, clicks, scrolling,
+# and keyboard shortcuts — used by the voice command engine.
+pyautogui>=0.9.54
 
 # --- Clipboard Access (save, paste, restore) ---
 pyperclip==1.9.0
+
+# --- LLM Routing & Semantic UI Control ---
+openai
+pywinauto
+python-dotenv
