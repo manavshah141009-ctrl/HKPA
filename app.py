@@ -33,6 +33,11 @@ import os
 import re
 import ctypes
 from ctypes import wintypes
+import sys
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import numpy as np
 import sounddevice as sd
 import pyperclip
@@ -265,6 +270,16 @@ class TextInjector:
             original = ""
             
         try:
+            import win32gui
+            fw = win32gui.GetForegroundWindow()
+            title = win32gui.GetWindowText(fw)
+            if "Personal Dictation Assistant" in title:
+                print("[Injector] App is focused. Skipping external Ctrl+V.")
+                return
+        except Exception:
+            pass
+
+        try:
             pyperclip.copy(text)
             print("[Injector] Copied to clipboard. Sending Ctrl+V via SendInput...")
             time.sleep(0.12)
@@ -327,6 +342,58 @@ class AudioRecorderThread(threading.Thread):
         self.status_callback("⏹️ Stopped", "gray")
 
 
+class SemanticRouter:
+    """
+    Passes transcribed text to Groq LLM for grammar/spelling correction.
+    """
+    def __init__(self, on_dictation, on_command_executed):
+        self._q = queue.Queue()
+        self._on_dictation = on_dictation
+        self._on_command_executed = on_command_executed
+        
+        api_key = os.environ.get("GROQ_API_KEY")
+        if not api_key:
+            print("[SemanticRouter] WARNING: GROQ_API_KEY not found in .env")
+            
+        from openai import OpenAI
+        self.client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=api_key or "missing_key"
+        )
+        self.model = "llama-3.1-8b-instant"
+        
+        self.system_prompt = (
+            "You receive transcribed text of the user speaking. "
+            "Carefully correct any spelling, grammar, or punctuation errors in the text, and return ONLY the corrected text. Make it sound natural and polished. Do not add any conversational filler, explanations, or quotes. "
+        )
+
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def submit(self, text: str):
+        self._q.put(text)
+        
+    def _run(self):
+        while True:
+            text = self._q.get()
+            if text is None:
+                break
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": text}
+                    ],
+                    temperature=0.0
+                )
+                content = response.choices[0].message.content or text
+                self._on_dictation(content)
+            except Exception as e:
+                print(f"[SemanticRouter] LLM routing error: {e}")
+                self._on_dictation(text)
+
+
 # ============================================================
 #  TRANSCRIBER THREAD
 # ============================================================
@@ -338,7 +405,14 @@ class TranscriberThread(threading.Thread):
         self.text_callback   = text_callback
         self.status_callback = status_callback
         self.cmd_parser      = cmd_parser
+        self.injector        = TextInjector()
         self._stop_event     = threading.Event()
+        
+        def _on_dict(t):
+            self.text_callback(t)
+            self.injector.inject(t + " ")
+            
+        self.router = SemanticRouter(_on_dict, lambda t, s: None)
 
     def stop(self):
         self._stop_event.set()
@@ -354,7 +428,7 @@ class TranscriberThread(threading.Thread):
             try:
                 segs, _ = self.model.transcribe(
                     audio, language="en", beam_size=5,
-                    vad_filter=VAD_FILTER,
+                    vad_filter=True,
                     vad_parameters=dict(min_silence_duration_ms=300, threshold=0.5),
                     condition_on_previous_text=False,
                     temperature=0.0,
@@ -364,10 +438,8 @@ class TranscriberThread(threading.Thread):
                 )
                 text = " ".join(s.text.strip() for s in segs if s.text.strip())
                 if text:
-                    # Check for mouse/scroll voice commands first
                     if not self.cmd_parser.try_command(text):
-                        # Only display in transcript box — no external paste
-                        self.text_callback(text)
+                        self.router.submit(text)
             except Exception as e:
                 print(f"[Transcriber] Error: {e}")
             finally:
