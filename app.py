@@ -66,7 +66,7 @@ def _beep(freq, duration):
 #  PYAUTOGUI SETTINGS
 # ============================================================
 pyautogui.FAILSAFE = True
-pyautogui.PAUSE    = 0.04
+pyautogui.PAUSE    = 0.01
 
 
 # ============================================================
@@ -328,7 +328,8 @@ class AudioRecorderThread(threading.Thread):
 
         self.status_callback("🎙️ Listening...", "green")
         frames_needed = int(SAMPLE_RATE * self.segment_sec)
-        buffer, frame_count = [], 0
+        silence_frames_needed = int(SAMPLE_RATE * 0.6)  # 0.6s silence threshold
+        buffer, frame_count, current_silence = [], 0, 0
 
         with sd.InputStream(
             samplerate=SAMPLE_RATE, channels=CHANNELS,
@@ -339,11 +340,23 @@ class AudioRecorderThread(threading.Thread):
                     chunk = _q.get(timeout=0.1)
                 except queue.Empty:
                     continue
-                buffer.append(chunk.flatten())
+                    
+                flat_chunk = chunk.flatten()
+                buffer.append(flat_chunk)
                 frame_count += chunk.shape[0]
-                if frame_count >= frames_needed:
-                    self.audio_queue.put(np.concatenate(buffer))
-                    buffer, frame_count = [], 0
+                
+                # Check volume (RMS) to detect silence
+                rms = np.sqrt(np.mean(np.square(flat_chunk)))
+                if rms < 0.01:  # Simple volume threshold
+                    current_silence += chunk.shape[0]
+                else:
+                    current_silence = 0
+                
+                # Stop chunk if max segment reached OR silence duration exceeded (after initial 0.5s)
+                if frame_count >= frames_needed or (frame_count > SAMPLE_RATE * 0.5 and current_silence > silence_frames_needed):
+                    if frame_count > 0:
+                        self.audio_queue.put(np.concatenate(buffer))
+                    buffer, frame_count, current_silence = [], 0, 0
 
         self.status_callback("⏹️ Stopped", "gray")
 
@@ -392,7 +405,8 @@ class SemanticRouter:
                         {"role": "system", "content": self.system_prompt},
                         {"role": "user", "content": text}
                     ],
-                    temperature=0.0
+                    temperature=0.0,
+                    max_tokens=150
                 )
                 content = response.choices[0].message.content or text
                 self._on_dictation(content, trigger_source, target_hwnd)
@@ -440,7 +454,7 @@ class TranscriberThread(threading.Thread):
                 segs, _ = self.model.transcribe(
                     audio, language="en", beam_size=5,
                     vad_filter=True,
-                    vad_parameters=dict(min_silence_duration_ms=300, threshold=0.5),
+                    vad_parameters=dict(min_silence_duration_ms=500, threshold=0.5),
                     condition_on_previous_text=False,
                     temperature=0.0,
                     no_speech_threshold=0.6,
