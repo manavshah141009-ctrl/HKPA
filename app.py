@@ -46,107 +46,22 @@ import keyboard
 import torch
 import winsound
 from faster_whisper import WhisperModel
+import os
+import sys
+import traceback
+from dotenv import load_dotenv
 
-def ensure_setup():
+def init_app_dirs():
     appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
     app_dir = os.path.join(appdata, "PersonalAssistant")
+    os.makedirs(app_dir, exist_ok=True)
     env_path = os.path.join(app_dir, "config.env")
-    
-    try:
-        os.makedirs(app_dir, exist_ok=True)
-        
-        from dotenv import load_dotenv
+    if os.path.exists(env_path):
         load_dotenv(env_path)
-        
-        # 2. Strict Environment Isolation
-        current_key = os.environ.get("GROQ_API_KEY", "")
-        if not current_key or len(current_key.strip()) < 10:
-            import customtkinter as ctk
-            import tkinter as tk
-            from tkinter import messagebox
-            
-            # Initialize custom tkinter setup window
-            ctk.set_appearance_mode("dark")
-            ctk.set_default_color_theme("blue")
-            
-            setup_app = ctk.CTk()
-            setup_app.title("First Run Setup")
-            setup_app.geometry("500x250")
-            
-            # 1. Force Tkinter to the Foreground
-            setup_app.attributes("-topmost", True)
-            setup_app.lift()
-            setup_app.focus_force()
-            
-            # Center the window
-            sw = setup_app.winfo_screenwidth()
-            sh = setup_app.winfo_screenheight()
-            setup_app.geometry(f"500x250+{(sw-500)//2}+{(sh-250)//2}")
+    return app_dir
 
-            # Instruction Label
-            label = ctk.CTkLabel(
-                setup_app, 
-                text="Welcome! To power the semantic routing,\nplease paste your Groq API Key below.",
-                font=ctk.CTkFont(size=14, weight="bold")
-            )
-            label.pack(pady=(30, 20))
-
-            # Input Box
-            api_entry = ctk.CTkEntry(setup_app, width=350, placeholder_text="gsk_...")
-            api_entry.pack(pady=(0, 20))
-            
-            def save_and_continue():
-                key = api_entry.get().strip()
-                if not key or len(key) < 10:
-                    messagebox.showwarning("Warning", "API Key is invalid. Please enter your Groq API key.", parent=setup_app)
-                    return
-                
-                # 4. Ensure Correct %APPDATA% Path Resolution
-                with open(env_path, "w") as f:
-                    f.write(f"GROQ_API_KEY={key}\n")
-                os.environ["GROQ_API_KEY"] = key
-                setup_app.destroy()
-
-            # Save Button
-            save_btn = ctk.CTkButton(setup_app, text="Save & Continue", command=save_and_continue)
-            save_btn.pack()
-            
-            setup_app.mainloop()
-            
-            # Check if they closed the window without saving
-            final_key = os.environ.get("GROQ_API_KEY", "")
-            if not final_key or len(final_key.strip()) < 10:
-                print("[Setup] No API Key provided. Exiting.")
-                sys.exit(1)
-                
-        return app_dir
-        
-    except Exception as e:
-        # 3. Add an Emergency Startup Log File
-        import traceback
-        import tkinter as tk
-        from tkinter import messagebox
-        
-        error_msg = f"Startup Error:\n{traceback.format_exc()}"
-        try:
-            log_path = os.path.join(app_dir, "startup_error.txt")
-            with open(log_path, "w") as f:
-                f.write(error_msg)
-        except Exception:
-            pass 
-        
-        try:
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            messagebox.showerror("Fatal Startup Error", f"The application failed to start. See startup_error.txt\n\n{str(e)}")
-            root.destroy()
-        except:
-            pass
-            
-        sys.exit(1)
-
-APP_DIR = ensure_setup()
+# Run the setup script immediately
+APP_DIR = init_app_dirs()
 MODELS_DIR = os.path.join(APP_DIR, "models")
 os.makedirs(MODELS_DIR, exist_ok=True)
 
@@ -723,6 +638,41 @@ class SettingsPanel:
 
         label("Click [Change] then press any key combination.")
 
+        # ── API KEY ──────────────────────────────────────────────
+        section("API KEY")
+        
+        api_row = ctk.CTkFrame(body, fg_color="transparent")
+        api_row.grid(row=br, column=0, sticky="ew", padx=18, pady=(0, 4)); br += 1
+        api_row.grid_columnconfigure(0, weight=1)
+        
+        current_api_key = os.environ.get("GROQ_API_KEY", "")
+        self._api_entry = ctk.CTkEntry(
+            api_row, placeholder_text="gsk_...",
+            fg_color=self.C_PANEL, text_color=self.C_TEXT,
+            border_color=self.C_BORDER, corner_radius=8,
+            height=38
+        )
+        self._api_entry.insert(0, current_api_key)
+        self._api_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        
+        def save_api_key():
+            new_key = self._api_entry.get().strip()
+            os.environ["GROQ_API_KEY"] = new_key
+            env_path = os.path.join(APP_DIR, "config.env")
+            with open(env_path, "w") as f:
+                f.write(f"GROQ_API_KEY={new_key}\n")
+            self._app.status_lbl.configure(text="API Key Saved!", text_color=self.C_GREEN)
+            
+        self._api_btn = ctk.CTkButton(
+            api_row, text="Save Config", width=90, height=38,
+            fg_color="#252840", hover_color="#353860",
+            font=ctk.CTkFont("Segoe UI", 12),
+            command=save_api_key
+        )
+        self._api_btn.grid(row=0, column=1)
+        
+        label("Required for semantic routing (fixes transcriptions).")
+
         # ── MODEL ────────────────────────────────────────────────
         section("WHISPER MODEL")
 
@@ -1264,6 +1214,13 @@ class DictationApp(ctk.CTk):
         self.after(100, self._poll_hotkey_queue)
 
     def _start_listening(self, source="gui_button", target_hwnd=None):
+        import os
+        api_key = os.environ.get("GROQ_API_KEY", "")
+        if not api_key or len(api_key.strip()) < 10:
+            import tkinter.messagebox as messagebox
+            messagebox.showwarning("API Key Missing", "Please add your Groq API Key in Settings to start using the assistant.", parent=self)
+            return
+
         self.is_listening = True
         _beep(*BEEP_START)
         self.toggle_btn.configure(
