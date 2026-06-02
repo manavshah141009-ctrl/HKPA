@@ -220,15 +220,25 @@ class TextInjector:
         if not text.strip():
             print("[Injector] Text is empty, skipping.")
             return
+            
+        # Release any potentially stuck modifiers
+        for mod in ['ctrl', 'shift', 'alt', 'windows']:
+            try:
+                keyboard.release(mod)
+            except:
+                pass
+                
         try:
             original = pyperclip.paste()
         except Exception:
             original = ""
+            
         try:
             pyperclip.copy(text)
             print("[Injector] Copied to clipboard. Sending Ctrl+V...")
-            time.sleep(0.06)
-            keyboard.send("ctrl+v")
+            time.sleep(0.1)
+            # Use pyautogui for safer hotkey execution
+            pyautogui.hotkey('ctrl', 'v')
             print("[Injector] Ctrl+V sent.")
             _beep(*BEEP_INJECT)
         except Exception as e:

@@ -490,20 +490,30 @@ class TextInjector:
     Works in any app: Chrome, WhatsApp, Notion, VS Code, Notepad, Explorer.
     """
 
-    def __init__(self, restore_delay: float = DEFAULT_CLIPBOARD_DELAY):
+    def __init__(self, restore_delay: float = 0.8):
         self._delay = restore_delay
 
     def inject(self, text: str):
         if not text.strip():
             return
+        
+        # Release any potentially stuck modifiers
+        for mod in ['ctrl', 'shift', 'alt', 'windows']:
+            try:
+                keyboard.release(mod)
+            except:
+                pass
+                
         try:
             original = pyperclip.paste()
         except Exception:
             original = ""
+            
         try:
             pyperclip.copy(text)
-            time.sleep(0.06)
-            keyboard.send("ctrl+v")
+            time.sleep(0.1)
+            # Use pyautogui for safer hotkey execution
+            pyautogui.hotkey('ctrl', 'v')
         except Exception as e:
             print(f"[Injector] Error: {e}")
         finally:
