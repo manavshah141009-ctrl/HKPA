@@ -343,46 +343,54 @@ class AudioRecorderThread(threading.Thread):
         self._stop_event.set()
 
     def run(self):
-        _q = queue.Queue()
+        try:
+            _q = queue.Queue()
 
-        def _cb(indata, frames, time_info, status):
-            if status:
-                print(f"[Audio] {status}")
-            _q.put(indata.copy())
+            def _cb(indata, frames, time_info, status):
+                if status:
+                    print(f"[Audio] {status}")
+                _q.put(indata.copy())
 
-        self.status_callback("🎙️ Listening...", "green")
-        frames_needed = int(SAMPLE_RATE * self.segment_sec)
-        silence_frames_needed = int(SAMPLE_RATE * 0.6)  # 0.6s silence threshold
-        buffer, frame_count, current_silence = [], 0, 0
+            self.status_callback("🎙️ Listening...", "green")
+            frames_needed = int(SAMPLE_RATE * self.segment_sec)
+            silence_frames_needed = int(SAMPLE_RATE * 0.6)  # 0.6s silence threshold
+            buffer, frame_count, current_silence = [], 0, 0
 
-        with sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=CHANNELS,
-            dtype="float32", blocksize=BLOCK_SIZE, callback=_cb,
-        ):
-            while not self._stop_event.is_set():
-                try:
-                    chunk = _q.get(timeout=0.1)
-                except queue.Empty:
-                    continue
+            with sd.InputStream(
+                samplerate=SAMPLE_RATE, channels=CHANNELS,
+                dtype="float32", blocksize=BLOCK_SIZE, callback=_cb,
+            ):
+                while not self._stop_event.is_set():
+                    try:
+                        chunk = _q.get(timeout=0.1)
+                    except queue.Empty:
+                        continue
+                        
+                    flat_chunk = chunk.flatten()
+                    buffer.append(flat_chunk)
+                    frame_count += chunk.shape[0]
                     
-                flat_chunk = chunk.flatten()
-                buffer.append(flat_chunk)
-                frame_count += chunk.shape[0]
-                
-                # Check volume (RMS) to detect silence
-                rms = np.sqrt(np.mean(np.square(flat_chunk)))
-                if rms < 0.01:  # Simple volume threshold
-                    current_silence += chunk.shape[0]
-                else:
-                    current_silence = 0
-                
-                # Stop chunk if max segment reached OR silence duration exceeded (after initial 0.5s)
-                if frame_count >= frames_needed or (frame_count > SAMPLE_RATE * 0.5 and current_silence > silence_frames_needed):
-                    if frame_count > 0:
-                        self.audio_queue.put(np.concatenate(buffer))
-                    buffer, frame_count, current_silence = [], 0, 0
+                    # Check volume (RMS) to detect silence
+                    rms = np.sqrt(np.mean(np.square(flat_chunk)))
+                    if rms < 0.01:  # Simple volume threshold
+                        current_silence += chunk.shape[0]
+                    else:
+                        current_silence = 0
+                    
+                    # Stop chunk if max segment reached OR silence duration exceeded (after initial 0.5s)
+                    if frame_count >= frames_needed or (frame_count > SAMPLE_RATE * 0.5 and current_silence > silence_frames_needed):
+                        if frame_count > 0:
+                            self.audio_queue.put(np.concatenate(buffer))
+                        buffer, frame_count, current_silence = [], 0, 0
 
-        self.status_callback("⏹️ Stopped", "gray")
+            self.status_callback("⏹️ Stopped", "gray")
+        except Exception as e:
+            import traceback, os, datetime
+            appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+            log_path = os.path.join(appdata, "PersonalAssistant", "runtime_debug_log.txt")
+            with open(log_path, "a") as f:
+                f.write(f"\n--- [AudioRecorder ERROR] {datetime.datetime.now()} ---\n")
+                traceback.print_exc(file=f)
 
 
 class SemanticRouter:
@@ -417,26 +425,34 @@ class SemanticRouter:
         self._q.put((text, trigger_source, target_hwnd))
         
     def _run(self):
-        while True:
-            item = self._q.get()
-            if item is None:
-                break
-            text, trigger_source, target_hwnd = item
-            try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": self.system_prompt},
-                        {"role": "user", "content": text}
-                    ],
-                    temperature=0.0,
-                    max_tokens=150
-                )
-                content = response.choices[0].message.content or text
-                self._on_dictation(content, trigger_source, target_hwnd)
-            except Exception as e:
-                print(f"[SemanticRouter] LLM routing error: {e}")
-                self._on_dictation(text, trigger_source, target_hwnd)
+        try:
+            while True:
+                item = self._q.get()
+                if item is None:
+                    break
+                text, trigger_source, target_hwnd = item
+                try:
+                    response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": self.system_prompt},
+                            {"role": "user", "content": text}
+                        ],
+                        temperature=0.0,
+                        max_tokens=150
+                    )
+                    content = response.choices[0].message.content or text
+                    self._on_dictation(content, trigger_source, target_hwnd)
+                except Exception as e:
+                    print(f"[SemanticRouter] LLM routing error: {e}")
+                    self._on_dictation(text, trigger_source, target_hwnd)
+        except Exception as e:
+            import traceback, os, datetime
+            appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+            log_path = os.path.join(appdata, "PersonalAssistant", "runtime_debug_log.txt")
+            with open(log_path, "a") as f:
+                f.write(f"\n--- [SemanticRouter ERROR] {datetime.datetime.now()} ---\n")
+                traceback.print_exc(file=f)
 
 
 # ============================================================
@@ -467,55 +483,63 @@ class TranscriberThread(threading.Thread):
         self._stop_event.set()
 
     def run(self):
-        while not self._stop_event.is_set():
-            try:
-                audio = self.audio_queue.get(timeout=0.5)
-            except queue.Empty:
-                continue
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    audio = self.audio_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
 
-            self.status_callback("⚡ Transcribing...", "orange")
-            try:
-                segs, _ = self.model.transcribe(
-                    audio, language="en", beam_size=5,
-                    vad_filter=True,
-                    vad_parameters=dict(min_silence_duration_ms=300, speech_pad_ms=50),
-                    condition_on_previous_text=False,
-                    temperature=0.0,
-                    no_speech_threshold=0.6,
-                    log_prob_threshold=-1.0,
-                    compression_ratio_threshold=2.4,
-                )
-                text = " ".join(s.text.strip() for s in segs if s.text.strip())
-                
-                # --- HALLUCINATION BLACKLIST FILTER ---
-                if text:
-                    t_lower = text.lower().strip()
-                    # Strip common punctuation for matching
-                    t_clean = t_lower.strip('.,!?')
+                self.status_callback("⚡ Transcribing...", "orange")
+                try:
+                    segs, _ = self.model.transcribe(
+                        audio, language="en", beam_size=5,
+                        vad_filter=True,
+                        vad_parameters=dict(min_silence_duration_ms=300, speech_pad_ms=50),
+                        condition_on_previous_text=False,
+                        temperature=0.0,
+                        no_speech_threshold=0.6,
+                        log_prob_threshold=-1.0,
+                        compression_ratio_threshold=2.4,
+                    )
+                    text = " ".join(s.text.strip() for s in segs if s.text.strip())
                     
-                    hallucinations = [
-                        "you're welcome", "thank you", "thanks for watching", 
-                        "subscribe", "www.", "amara.org", "thanks"
-                    ]
-                    
-                    is_hallucination = False
-                    for h in hallucinations:
-                        if t_clean == h or t_clean.endswith(f" {h}"):
-                            is_hallucination = True
-                            print(f"[Transcriber] Suppressed hallucination: '{text}'")
-                            break
-                            
-                    if is_hallucination:
-                        text = ""
-                # --------------------------------------
+                    # --- HALLUCINATION BLACKLIST FILTER ---
+                    if text:
+                        t_lower = text.lower().strip()
+                        # Strip common punctuation for matching
+                        t_clean = t_lower.strip('.,!?')
+                        
+                        hallucinations = [
+                            "you're welcome", "thank you", "thanks for watching", 
+                            "subscribe", "www.", "amara.org", "thanks"
+                        ]
+                        
+                        is_hallucination = False
+                        for h in hallucinations:
+                            if t_clean == h or t_clean.endswith(f" {h}"):
+                                is_hallucination = True
+                                print(f"[Transcriber] Suppressed hallucination: '{text}'")
+                                break
+                                
+                        if is_hallucination:
+                            text = ""
+                    # --------------------------------------
 
-                if text:
-                    if not self.cmd_parser.try_command(text):
-                        self.router.submit(text, self.trigger_source, self.target_hwnd)
-            except Exception as e:
-                print(f"[Transcriber] Error: {e}")
-            finally:
-                self.status_callback("🎙️ Listening...", "green")
+                    if text:
+                        if not self.cmd_parser.try_command(text):
+                            self.router.submit(text, self.trigger_source, self.target_hwnd)
+                except Exception as e:
+                    print(f"[Transcriber] Error: {e}")
+                finally:
+                    self.status_callback("🎙️ Listening...", "green")
+        except Exception as e:
+            import traceback, os, datetime
+            appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+            log_path = os.path.join(appdata, "PersonalAssistant", "runtime_debug_log.txt")
+            with open(log_path, "a") as f:
+                f.write(f"\n--- [Transcriber ERROR] {datetime.datetime.now()} ---\n")
+                traceback.print_exc(file=f)
 
 
 # ============================================================
