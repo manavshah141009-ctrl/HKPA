@@ -353,7 +353,7 @@ class SemanticRouter:
         self.system_prompt = (
             "You are a silent semantic routing engine for a dictation and computer control application. "
             "You receive transcribed text of the user speaking. "
-            "If the text is standard speech meant to be typed out (dictation), DO NOT call any tools. Just return the text exactly as provided. "
+            "If the text is standard speech meant to be typed out (dictation), DO NOT call any tools. Instead, carefully correct any spelling, grammar, or punctuation errors in the text, and return ONLY the corrected text. Make it sound natural and polished. Do not add any conversational filler, explanations, or quotes. "
             "If the text is a command intended to control the computer, you MUST call the appropriate tool. "
             "NEVER output conversational text or reasoning. Output ONLY the raw tool call JSON.\n\n"
             "Structural Few-Shot Examples:\n"
