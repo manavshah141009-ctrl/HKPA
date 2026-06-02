@@ -261,7 +261,7 @@ class TextInjector:
     def __init__(self, restore_delay: float = 0.5):
         self._delay = restore_delay
 
-    def inject(self, text: str):
+    def inject(self, text: str, target_hwnd=None):
         if not text.strip():
             return
             
@@ -272,6 +272,20 @@ class TextInjector:
 
         try:
             import pyautogui
+            import win32gui
+            
+            # Restore target window focus if we have a valid handle
+            if target_hwnd:
+                print(f"[Injector] Activating target hwnd: {target_hwnd}")
+                try:
+                    import win32com.client
+                    shell = win32com.client.Dispatch("WScript.Shell")
+                    shell.SendKeys('%') # Dummy ALT to allow focus stealing
+                    win32gui.SetForegroundWindow(target_hwnd)
+                    time.sleep(0.1) # Brief delay for OS focus shift
+                except Exception as e:
+                    print(f"[Injector] Focus restore error: {e}")
+
             pyperclip.copy(text)
             print("[Injector] Copied to clipboard. Sending Ctrl+V...")
             time.sleep(0.05)
@@ -362,15 +376,15 @@ class SemanticRouter:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-    def submit(self, text: str, trigger_source: str):
-        self._q.put((text, trigger_source))
+    def submit(self, text: str, trigger_source: str, target_hwnd=None):
+        self._q.put((text, trigger_source, target_hwnd))
         
     def _run(self):
         while True:
             item = self._q.get()
             if item is None:
                 break
-            text, trigger_source = item
+            text, trigger_source, target_hwnd = item
             try:
                 response = self.client.chat.completions.create(
                     model=self.model,
@@ -381,17 +395,17 @@ class SemanticRouter:
                     temperature=0.0
                 )
                 content = response.choices[0].message.content or text
-                self._on_dictation(content, trigger_source)
+                self._on_dictation(content, trigger_source, target_hwnd)
             except Exception as e:
                 print(f"[SemanticRouter] LLM routing error: {e}")
-                self._on_dictation(text, trigger_source)
+                self._on_dictation(text, trigger_source, target_hwnd)
 
 
 # ============================================================
 #  TRANSCRIBER THREAD
 # ============================================================
 class TranscriberThread(threading.Thread):
-    def __init__(self, model, audio_queue, text_callback, status_callback, cmd_parser, trigger_source: str):
+    def __init__(self, model, audio_queue, text_callback, status_callback, cmd_parser, trigger_source: str, target_hwnd=None):
         super().__init__(daemon=True)
         self.model           = model
         self.audio_queue     = audio_queue
@@ -399,14 +413,15 @@ class TranscriberThread(threading.Thread):
         self.status_callback = status_callback
         self.cmd_parser      = cmd_parser
         self.trigger_source  = trigger_source
+        self.target_hwnd     = target_hwnd
         self.injector        = TextInjector()
         self._stop_event     = threading.Event()
         
-        def _on_dict(t, source):
+        def _on_dict(t, source, hwnd):
             if source == "gui_button":
                 self.text_callback(t)
             elif source == "global_hotkey":
-                self.injector.inject(t + " ")
+                self.injector.inject(t + " ", hwnd)
             
         self.router = SemanticRouter(_on_dict, lambda t, s: None)
 
@@ -435,7 +450,7 @@ class TranscriberThread(threading.Thread):
                 text = " ".join(s.text.strip() for s in segs if s.text.strip())
                 if text:
                     if not self.cmd_parser.try_command(text):
-                        self.router.submit(text, self.trigger_source)
+                        self.router.submit(text, self.trigger_source, self.target_hwnd)
             except Exception as e:
                 print(f"[Transcriber] Error: {e}")
             finally:
@@ -837,6 +852,8 @@ class DictationApp(ctk.CTk):
         ctk.set_default_color_theme("blue")
         self.title("🎙️ Personal Dictation Assistant")
         self.geometry("900x680")
+        self.attributes("-topmost", True)
+        self.lift()
         self.minsize(700, 500)
         self.configure(fg_color=self.C_BG)
         self.update_idletasks()
@@ -1051,15 +1068,16 @@ class DictationApp(ctk.CTk):
     # ----------------------------------------------------------
     #  Listening toggle
     # ----------------------------------------------------------
-    def _toggle_listening(self, source="gui_button"):
+    def _toggle_listening(self, source="gui_button", target_hwnd=None):
         if self.is_listening:
             self._stop_listening()
         else:
-            self._start_listening(source)
+            self._start_listening(source, target_hwnd)
 
     def _hotkey_listener_loop(self):
         # Polls GetAsyncKeyState via keyboard.is_pressed
         held = False
+        import win32gui
         while True:
             try:
                 hk_parts = self._hotkey.split('+')
@@ -1067,7 +1085,18 @@ class DictationApp(ctk.CTk):
                     if not held:
                         held = True
                         print("[App] Hotkey physical press detected (Poller)!")
-                        self._hotkey_queue.put("global_hotkey")
+                        
+                        # Capture the exact active window right now
+                        target_hwnd = None
+                        try:
+                            hwnd = win32gui.GetForegroundWindow()
+                            title = win32gui.GetWindowText(hwnd)
+                            if "Personal Dictation Assistant" not in title:
+                                target_hwnd = hwnd
+                        except:
+                            pass
+                            
+                        self._hotkey_queue.put(("global_hotkey", target_hwnd))
                 else:
                     held = False
             except Exception:
@@ -1078,13 +1107,17 @@ class DictationApp(ctk.CTk):
         # Runs in main GUI thread
         try:
             while True:
-                source = self._hotkey_queue.get_nowait()
-                self._toggle_listening(source)
+                item = self._hotkey_queue.get_nowait()
+                if isinstance(item, tuple):
+                    source, target_hwnd = item
+                else:
+                    source, target_hwnd = item, None
+                self._toggle_listening(source, target_hwnd)
         except queue.Empty:
             pass
         self.after(100, self._poll_hotkey_queue)
 
-    def _start_listening(self, source="gui_button"):
+    def _start_listening(self, source="gui_button", target_hwnd=None):
         self.is_listening = True
         _beep(*BEEP_START)
         self.toggle_btn.configure(
@@ -1109,6 +1142,7 @@ class DictationApp(ctk.CTk):
             status_callback=self._on_status_changed,
             cmd_parser=self.cmd_parser,
             trigger_source=source,
+            target_hwnd=target_hwnd,
         )
         self.transcriber_thread.start()
 
