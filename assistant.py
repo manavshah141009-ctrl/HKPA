@@ -41,6 +41,8 @@ import winsound
 import subprocess
 import base64
 import io
+import ctypes
+from ctypes import wintypes
 
 # ── Audio & ML ────────────────────────────────────────────
 import numpy as np
@@ -484,9 +486,55 @@ class ContinuousRecorder:
 #  TEXT INJECTOR
 # ============================================================
 
+# ── Win32 constants for SendInput ────────────────────────────
+_user32    = ctypes.WinDLL("user32", use_last_error=True)
+_KEYEVENTF_KEYUP   = 0x0002
+_KEYEVENTF_UNICODE = 0x0004
+_VK_CONTROL = 0x11
+_VK_V       = 0x56
+_WM_PASTE   = 0x0302
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk",         wintypes.WORD),
+        ("wScan",       wintypes.WORD),
+        ("dwFlags",     wintypes.DWORD),
+        ("time",        wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+class _INPUT_UNION(ctypes.Union):
+    _fields_ = [("ki", _KEYBDINPUT)]
+
+class _INPUT(ctypes.Structure):
+    _fields_ = [("type", wintypes.DWORD), ("_", _INPUT_UNION)]
+
+_INPUT_KEYBOARD = 1
+
+def _send_ctrl_v():
+    """Send Ctrl+V via SendInput — completely bypasses keyboard hooks."""
+    inputs = (_INPUT * 4)(
+        # Ctrl down
+        _INPUT(type=_INPUT_KEYBOARD, _=_INPUT_UNION(ki=_KEYBDINPUT(
+            wVk=_VK_CONTROL, dwFlags=0))),
+        # V down
+        _INPUT(type=_INPUT_KEYBOARD, _=_INPUT_UNION(ki=_KEYBDINPUT(
+            wVk=_VK_V, dwFlags=0))),
+        # V up
+        _INPUT(type=_INPUT_KEYBOARD, _=_INPUT_UNION(ki=_KEYBDINPUT(
+            wVk=_VK_V, dwFlags=_KEYEVENTF_KEYUP))),
+        # Ctrl up
+        _INPUT(type=_INPUT_KEYBOARD, _=_INPUT_UNION(ki=_KEYBDINPUT(
+            wVk=_VK_CONTROL, dwFlags=_KEYEVENTF_KEYUP))),
+    )
+    _user32.SendInput(4, inputs, ctypes.sizeof(_INPUT))
+
+
 class TextInjector:
     """
-    Pastes text into the active focused window via clipboard swap + Ctrl+V.
+    Pastes text into the active focused window via clipboard + SendInput.
+    Uses Win32 SendInput directly — bypasses the `keyboard` library hook
+    so the paste never triggers the hotkey listener or causes beeps.
     Works in any app: Chrome, WhatsApp, Notion, VS Code, Notepad, Explorer.
     """
 
@@ -496,24 +544,16 @@ class TextInjector:
     def inject(self, text: str):
         if not text.strip():
             return
-        
-        # Release any potentially stuck modifiers
-        for mod in ['ctrl', 'shift', 'alt', 'windows']:
-            try:
-                keyboard.release(mod)
-            except:
-                pass
-                
+
         try:
             original = pyperclip.paste()
         except Exception:
             original = ""
-            
+
         try:
             pyperclip.copy(text)
-            time.sleep(0.1)
-            # Use pyautogui for safer hotkey execution
-            pyautogui.hotkey('ctrl', 'v')
+            time.sleep(0.12)   # give clipboard time to settle
+            _send_ctrl_v()     # SendInput — invisible to keyboard hook
         except Exception as e:
             print(f"[Injector] Error: {e}")
         finally:
@@ -1054,7 +1094,7 @@ class DictationAssistant:
         self._tray.start()
 
         hotkey = self.cfg.get("hotkey")
-        keyboard.add_hotkey(hotkey, self._on_hotkey, suppress=False)
+        keyboard.add_hotkey(hotkey, self._on_hotkey, suppress=True)
         print(f"[App] Ready. Hotkey: {hotkey.upper()}")
 
     # ----------------------------------------------------------------
@@ -1108,7 +1148,7 @@ class DictationAssistant:
             keyboard.unhook_all()
         except Exception:
             pass
-        keyboard.add_hotkey(new_hk, self._on_hotkey, suppress=False)
+        keyboard.add_hotkey(new_hk, self._on_hotkey, suppress=True)
         print(f"[App] Hotkey -> {new_hk.upper()}")
 
     def _on_step_changed(self, step: int):

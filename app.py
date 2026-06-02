@@ -31,6 +31,8 @@ import time
 import json
 import os
 import re
+import ctypes
+from ctypes import wintypes
 import numpy as np
 import sounddevice as sd
 import pyperclip
@@ -205,6 +207,42 @@ class CommandParser:
 
 
 # ============================================================
+#  WIN32 SENDINPUT HELPER (bypasses keyboard hooks)
+# ============================================================
+_user32_app    = ctypes.WinDLL("user32", use_last_error=True)
+_KEYEVENTF_KEYUP_APP = 0x0002
+_VK_CONTROL_APP = 0x11
+_VK_V_APP       = 0x56
+
+class _KEYBDINPUT_APP(ctypes.Structure):
+    _fields_ = [
+        ("wVk",         wintypes.WORD),
+        ("wScan",       wintypes.WORD),
+        ("dwFlags",     wintypes.DWORD),
+        ("time",        wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+class _INPUT_UNION_APP(ctypes.Union):
+    _fields_ = [("ki", _KEYBDINPUT_APP)]
+
+class _INPUT_APP(ctypes.Structure):
+    _fields_ = [("type", wintypes.DWORD), ("_", _INPUT_UNION_APP)]
+
+_INPUT_KEYBOARD_APP = 1
+
+def _send_ctrl_v_app():
+    """Send Ctrl+V via SendInput — completely bypasses keyboard hooks."""
+    inputs = (_INPUT_APP * 4)(
+        _INPUT_APP(type=_INPUT_KEYBOARD_APP, _=_INPUT_UNION_APP(ki=_KEYBDINPUT_APP(wVk=_VK_CONTROL_APP, dwFlags=0))),
+        _INPUT_APP(type=_INPUT_KEYBOARD_APP, _=_INPUT_UNION_APP(ki=_KEYBDINPUT_APP(wVk=_VK_V_APP, dwFlags=0))),
+        _INPUT_APP(type=_INPUT_KEYBOARD_APP, _=_INPUT_UNION_APP(ki=_KEYBDINPUT_APP(wVk=_VK_V_APP, dwFlags=_KEYEVENTF_KEYUP_APP))),
+        _INPUT_APP(type=_INPUT_KEYBOARD_APP, _=_INPUT_UNION_APP(ki=_KEYBDINPUT_APP(wVk=_VK_CONTROL_APP, dwFlags=_KEYEVENTF_KEYUP_APP))),
+    )
+    _user32_app.SendInput(4, inputs, ctypes.sizeof(_INPUT_APP))
+
+
+# ============================================================
 #  TEXT INJECTOR
 # ============================================================
 class TextInjector:
@@ -221,13 +259,6 @@ class TextInjector:
             print("[Injector] Text is empty, skipping.")
             return
             
-        # Release any potentially stuck modifiers
-        for mod in ['ctrl', 'shift', 'alt', 'windows']:
-            try:
-                keyboard.release(mod)
-            except:
-                pass
-                
         try:
             original = pyperclip.paste()
         except Exception:
@@ -235,10 +266,9 @@ class TextInjector:
             
         try:
             pyperclip.copy(text)
-            print("[Injector] Copied to clipboard. Sending Ctrl+V...")
-            time.sleep(0.1)
-            # Use pyautogui for safer hotkey execution
-            pyautogui.hotkey('ctrl', 'v')
+            print("[Injector] Copied to clipboard. Sending Ctrl+V via SendInput...")
+            time.sleep(0.12)
+            _send_ctrl_v_app()   # Bypasses all keyboard hooks
             print("[Injector] Ctrl+V sent.")
             _beep(*BEEP_INJECT)
         except Exception as e:
