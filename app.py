@@ -68,15 +68,28 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 # ============================================================
 #  AUDIO FEEDBACK (BEEPS)
 # ============================================================
-BEEP_START   = (1000, 80)
-BEEP_STOP    = (700, 80)
+BEEP_START   = (1000, 200)
+BEEP_STOP    = (700, 200)
 BEEP_INJECT  = (1200, 60)
 
 def _beep(freq, duration):
     try:
+        import winsound
         threading.Thread(target=lambda: winsound.Beep(freq, duration), daemon=True).start()
     except Exception:
         pass
+
+def _notify(title, message):
+    try:
+        from plyer import notification
+        def run_notify():
+            try:
+                notification.notify(title=title, message=message, app_name="Dictation", timeout=2)
+            except Exception as e:
+                print(f"[Notify] backend error: {e}")
+        threading.Thread(target=run_notify, daemon=True).start()
+    except Exception as e:
+        print(f"[Notify] import error: {e}")
 
 
 # ============================================================
@@ -313,7 +326,24 @@ class TextInjector:
             pyperclip.copy(text)
             print("[Injector] Copied to clipboard. Sending Ctrl+V...")
             time.sleep(0.05)
-            pyautogui.hotkey('ctrl', 'v')
+            
+            try:
+                import keyboard
+                keyboard.send('ctrl+v')
+            except Exception as e1:
+                print(f"[Injector] keyboard.send failed: {e1}, trying pyautogui fallback.")
+                try:
+                    pyautogui.hotkey('ctrl', 'v')
+                except Exception as e2:
+                    import traceback, os, datetime
+                    appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+                    log_path = os.path.join(appdata, "PersonalAssistant", "runtime_debug_log.txt")
+                    with open(log_path, "a") as f:
+                        f.write(f"\n--- [TextInjector ERROR] {datetime.datetime.now()} ---\n")
+                        f.write(f"keyboard.send error: {e1}\n")
+                        f.write(f"pyautogui error: {e2}\n")
+                        traceback.print_exc(file=f)
+
             print("[Injector] Ctrl+V sent.")
             _beep(*BEEP_INJECT)
             time.sleep(0.05)
@@ -381,6 +411,7 @@ class AudioRecorderThread(threading.Thread):
                     if frame_count >= frames_needed or (frame_count > SAMPLE_RATE * 0.5 and current_silence > silence_frames_needed):
                         if frame_count > 0:
                             self.audio_queue.put(np.concatenate(buffer))
+                            _beep(*BEEP_STOP)
                         buffer, frame_count, current_silence = [], 0, 0
 
             self.status_callback("⏹️ Stopped", "gray")
@@ -491,6 +522,7 @@ class TranscriberThread(threading.Thread):
                     continue
 
                 self.status_callback("⚡ Transcribing...", "orange")
+                _notify("Dictation", "Processing & Pasting...")
                 try:
                     segs, _ = self.model.transcribe(
                         audio, language="en", beam_size=5,
@@ -1247,6 +1279,7 @@ class DictationApp(ctk.CTk):
 
         self.is_listening = True
         _beep(*BEEP_START)
+        _notify("Dictation", "Listening...")
         self.toggle_btn.configure(
             text="⏹  Stop Listening",
             fg_color="#C0392B", hover_color="#922B21",
