@@ -248,12 +248,44 @@ def _send_ctrl_v_app():
 
 
 # ============================================================
+#  TARGET WINDOW TRACKER
+# ============================================================
+class TargetWindowTracker:
+    """
+    Constantly tracks the active window in the background.
+    Remembers the last focused window that was NOT the dictation app.
+    """
+    def __init__(self):
+        self.last_target_hwnd = None
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        
+    def _run(self):
+        import win32gui
+        while True:
+            try:
+                hwnd = win32gui.GetForegroundWindow()
+                if hwnd:
+                    title = win32gui.GetWindowText(hwnd)
+                    # Ignore the app itself and empty desktop/taskbar
+                    if "Personal Dictation Assistant" not in title and title.strip():
+                        self.last_target_hwnd = hwnd
+            except Exception:
+                pass
+            time.sleep(0.1)
+
+# Global tracker instance
+_window_tracker = TargetWindowTracker()
+
+
+# ============================================================
 #  TEXT INJECTOR
 # ============================================================
 class TextInjector:
     """
     Pastes text into the active focused window via clipboard swap + Ctrl+V.
     Works in any app: Chrome, WhatsApp, Notion, VS Code, Notepad, Explorer.
+    If the Dictation App is currently focused, it restores focus to the last known target window.
     """
     def __init__(self, restore_delay: float = 0.5):
         self._delay = restore_delay
@@ -274,10 +306,22 @@ class TextInjector:
             fw = win32gui.GetForegroundWindow()
             title = win32gui.GetWindowText(fw)
             if "Personal Dictation Assistant" in title:
-                print("[Injector] App is focused. Skipping external Ctrl+V.")
-                return
-        except Exception:
-            pass
+                if _window_tracker.last_target_hwnd:
+                    print(f"[Injector] App is focused. Switching to last target hwnd: {_window_tracker.last_target_hwnd}")
+                    import win32com.client
+                    try:
+                        # Sometimes SetForegroundWindow fails if we don't use shell
+                        shell = win32com.client.Dispatch("WScript.Shell")
+                        shell.SendKeys('%') # Send a dummy ALT key to allow focus stealing
+                        win32gui.SetForegroundWindow(_window_tracker.last_target_hwnd)
+                        time.sleep(0.2)
+                    except Exception as e:
+                        print(f"[Injector] Failed to switch window: {e}")
+                else:
+                    print("[Injector] App is focused but no previous target window known. Skipping external Ctrl+V.")
+                    return
+        except Exception as e:
+            print(f"[Injector] Focus check error: {e}")
 
         try:
             pyperclip.copy(text)
