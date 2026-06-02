@@ -338,7 +338,6 @@ class TranscriberThread(threading.Thread):
         self.text_callback   = text_callback
         self.status_callback = status_callback
         self.cmd_parser      = cmd_parser
-        self.injector        = TextInjector()
         self._stop_event     = threading.Event()
 
     def stop(self):
@@ -365,10 +364,10 @@ class TranscriberThread(threading.Thread):
                 )
                 text = " ".join(s.text.strip() for s in segs if s.text.strip())
                 if text:
-                    # Check for voice commands first
+                    # Check for mouse/scroll voice commands first
                     if not self.cmd_parser.try_command(text):
+                        # Only display in transcript box — no external paste
                         self.text_callback(text)
-                        self.injector.inject(text + " ")
             except Exception as e:
                 print(f"[Transcriber] Error: {e}")
             finally:
@@ -862,9 +861,13 @@ class DictationApp(ctk.CTk):
         self.transcript_box.insert(
             "1.0",
             f"Press  ▶ Start Listening  or  {hk}  to begin dictating...\n\n"
-            "Your words will appear here in real time.\n\n"
-            "💡 You can also say voice commands like:\n"
-            "   'scroll down', 'click', 'move right', 'select all', 'save'",
+            "Your words will appear here as a live transcript.\n\n"
+            "💡 TIP: This window shows your transcript only.\n"
+            "   To type by voice into ANY other app (WhatsApp, Chrome, etc.):\n"
+            "   1. Run assistant.py separately (it lives in the system tray).\n"
+            "   2. Click inside the chat box in the other app.\n"
+            "   3. Press the hotkey — speak — your words are auto-typed.\n\n"
+            "🖥️ Voice commands: 'scroll down', 'click', 'move right'",
         )
         self.transcript_box.configure(state="disabled", text_color=self.C_SUBTEXT)
         self._placeholder_active = True
