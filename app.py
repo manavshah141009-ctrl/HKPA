@@ -53,28 +53,62 @@ def ensure_setup():
     os.makedirs(app_dir, exist_ok=True)
     
     env_path = os.path.join(app_dir, "config.env")
+    from dotenv import load_dotenv
     load_dotenv(env_path)
     
     if not os.environ.get("GROQ_API_KEY"):
-        import tkinter as tk
-        from tkinter import simpledialog, messagebox
+        import customtkinter as ctk
+        from tkinter import messagebox
         
-        root = tk.Tk()
-        root.withdraw()
+        # Initialize custom tkinter setup window
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
         
-        api_key = simpledialog.askstring(
-            "First Run Setup", 
-            "Welcome to Personal Dictation Assistant!\n\nPlease enter your GROQ API Key to continue:"
+        setup_app = ctk.CTk()
+        setup_app.title("First Run Setup")
+        setup_app.geometry("500x250")
+        setup_app.attributes("-topmost", True)
+        
+        # Center the window
+        sw = setup_app.winfo_screenwidth()
+        sh = setup_app.winfo_screenheight()
+        setup_app.geometry(f"500x250+{(sw-500)//2}+{(sh-250)//2}")
+
+        # Instruction Label
+        label = ctk.CTkLabel(
+            setup_app, 
+            text="Welcome! To power the semantic routing,\nplease paste your Groq API Key below.",
+            font=ctk.CTkFont(size=14, weight="bold")
         )
-        if api_key and api_key.strip():
-            with open(env_path, "w") as f:
-                f.write(f"GROQ_API_KEY={api_key.strip()}\n")
-            os.environ["GROQ_API_KEY"] = api_key.strip()
-            messagebox.showinfo("Setup Complete", f"API Key saved securely to:\n{env_path}")
-        else:
-            messagebox.showwarning("Setup Incomplete", "No API Key provided. AI correction will not work.")
-        root.destroy()
+        label.pack(pady=(30, 20))
+
+        # Input Box
+        api_entry = ctk.CTkEntry(setup_app, width=350, placeholder_text="gsk_...")
+        api_entry.pack(pady=(0, 20))
         
+        def save_and_continue():
+            key = api_entry.get().strip()
+            if not key:
+                messagebox.showwarning("Warning", "API Key cannot be empty. Please enter your Groq API key.", parent=setup_app)
+                return
+            
+            # Save key
+            with open(env_path, "w") as f:
+                f.write(f"GROQ_API_KEY={key}\n")
+            os.environ["GROQ_API_KEY"] = key
+            setup_app.destroy()
+
+        # Save Button
+        save_btn = ctk.CTkButton(setup_app, text="Save & Continue", command=save_and_continue)
+        save_btn.pack()
+        
+        setup_app.mainloop()
+        
+        # Check if they closed the window without saving
+        if not os.environ.get("GROQ_API_KEY"):
+            print("[Setup] No API Key provided. Exiting.")
+            sys.exit(1)
+            
     return app_dir
 
 APP_DIR = ensure_setup()
