@@ -44,9 +44,42 @@ import pyperclip
 import pyautogui
 import keyboard
 import torch
-import sys
 import winsound
 from faster_whisper import WhisperModel
+
+def ensure_setup():
+    appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+    app_dir = os.path.join(appdata, "PersonalAssistant")
+    os.makedirs(app_dir, exist_ok=True)
+    
+    env_path = os.path.join(app_dir, "config.env")
+    load_dotenv(env_path)
+    
+    if not os.environ.get("GROQ_API_KEY"):
+        import tkinter as tk
+        from tkinter import simpledialog, messagebox
+        
+        root = tk.Tk()
+        root.withdraw()
+        
+        api_key = simpledialog.askstring(
+            "First Run Setup", 
+            "Welcome to Personal Dictation Assistant!\n\nPlease enter your GROQ API Key to continue:"
+        )
+        if api_key and api_key.strip():
+            with open(env_path, "w") as f:
+                f.write(f"GROQ_API_KEY={api_key.strip()}\n")
+            os.environ["GROQ_API_KEY"] = api_key.strip()
+            messagebox.showinfo("Setup Complete", f"API Key saved securely to:\n{env_path}")
+        else:
+            messagebox.showwarning("Setup Incomplete", "No API Key provided. AI correction will not work.")
+        root.destroy()
+        
+    return app_dir
+
+APP_DIR = ensure_setup()
+MODELS_DIR = os.path.join(APP_DIR, "models")
+os.makedirs(MODELS_DIR, exist_ok=True)
 
 # ============================================================
 #  AUDIO FEEDBACK (BEEPS)
@@ -82,7 +115,7 @@ DEFAULT_MOUSE_STEP    = 120
 DEFAULT_MODEL_GPU     = "small.en"
 DEFAULT_MODEL_CPU     = "base.en"
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+CONFIG_FILE = os.path.join(APP_DIR, "config.json")
 
 WORD_TO_NUM = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -122,7 +155,7 @@ class ConfigManager:
     def _load(self):
         if os.path.exists(self._path):
             try:
-                with open(self._path, "r", encoding="utf-8") as f:
+                with open(self._path, "r", encoding="utf-8-sig") as f:
                     return {**self.DEFAULTS, **json.load(f)}
             except Exception:
                 pass
@@ -159,7 +192,14 @@ def detect_device(cfg: ConfigManager):
 
 def load_model(device, compute_type, model_size):
     print(f"[Model] Loading {model_size} on {device}...")
-    m = WhisperModel(model_size, device=device, compute_type=compute_type, cpu_threads=4)
+    # Download and cache model in %APPDATA% so the .exe isn't bloated
+    m = WhisperModel(
+        model_size, 
+        device=device, 
+        compute_type=compute_type, 
+        cpu_threads=4,
+        download_root=MODELS_DIR
+    )
     print("[Model] Ready.")
     return m
 
