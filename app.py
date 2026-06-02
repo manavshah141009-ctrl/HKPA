@@ -1375,7 +1375,8 @@ class SplashScreen(ctk.CTkToplevel):
 # ============================================================
 def main():
     import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    if sys.stdout is not None:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
     ctk.set_appearance_mode("dark")
     cfg  = ConfigManager()
