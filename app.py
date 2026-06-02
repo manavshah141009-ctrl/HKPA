@@ -454,7 +454,7 @@ class TranscriberThread(threading.Thread):
                 segs, _ = self.model.transcribe(
                     audio, language="en", beam_size=5,
                     vad_filter=True,
-                    vad_parameters=dict(min_silence_duration_ms=500, threshold=0.5),
+                    vad_parameters=dict(min_silence_duration_ms=300, speech_pad_ms=50),
                     condition_on_previous_text=False,
                     temperature=0.0,
                     no_speech_threshold=0.6,
@@ -462,6 +462,29 @@ class TranscriberThread(threading.Thread):
                     compression_ratio_threshold=2.4,
                 )
                 text = " ".join(s.text.strip() for s in segs if s.text.strip())
+                
+                # --- HALLUCINATION BLACKLIST FILTER ---
+                if text:
+                    t_lower = text.lower().strip()
+                    # Strip common punctuation for matching
+                    t_clean = t_lower.strip('.,!?')
+                    
+                    hallucinations = [
+                        "you're welcome", "thank you", "thanks for watching", 
+                        "subscribe", "www.", "amara.org", "thanks"
+                    ]
+                    
+                    is_hallucination = False
+                    for h in hallucinations:
+                        if t_clean == h or t_clean.endswith(f" {h}"):
+                            is_hallucination = True
+                            print(f"[Transcriber] Suppressed hallucination: '{text}'")
+                            break
+                            
+                    if is_hallucination:
+                        text = ""
+                # --------------------------------------
+
                 if text:
                     if not self.cmd_parser.try_command(text):
                         self.router.submit(text, self.trigger_source, self.target_hwnd)
