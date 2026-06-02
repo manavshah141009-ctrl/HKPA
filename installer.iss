@@ -15,7 +15,6 @@ PrivilegesRequired=lowest
 ; SetupIconFile=app_icon.ico
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "startupicon"; Description: "Launch on Windows Startup"; GroupDescription: "Startup options:"
 
 [Files]
@@ -23,9 +22,8 @@ Name: "startupicon"; Description: "Launch on Windows Startup"; GroupDescription:
 Source: "dist\PersonalDictationAssistant\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Personal Dictation Assistant"; Filename: "{app}\PersonalDictationAssistant.exe"
-Name: "{group}\{cm:UninstallProgram,Personal Dictation Assistant}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Personal Dictation Assistant"; Filename: "{app}\PersonalDictationAssistant.exe"; Tasks: desktopicon
+Name: "{userprograms}\Personal Dictation Assistant"; Filename: "{app}\PersonalDictationAssistant.exe"
+Name: "{userprograms}\{cm:UninstallProgram,Personal Dictation Assistant}"; Filename: "{uninstallexe}"
 Name: "{autostartup}\Personal Dictation Assistant"; Filename: "{app}\PersonalDictationAssistant.exe"; Tasks: startupicon
 
 [Run]
