@@ -256,52 +256,38 @@ def _send_ctrl_v_app():
 class TextInjector:
     """
     Pastes text into the active focused window via clipboard swap + Ctrl+V.
-    Works in any app: Chrome, WhatsApp, Notion, VS Code, Notepad, Explorer.
-    If the Dictation App is currently focused, it restores focus to the last known target window.
+    Works strictly at the OS level to prevent focus stealing.
     """
     def __init__(self, restore_delay: float = 0.5):
         self._delay = restore_delay
 
     def inject(self, text: str):
-        print(f"[Injector] Attempting to inject: {text}")
         if not text.strip():
-            print("[Injector] Text is empty, skipping.")
             return
             
         try:
             original = pyperclip.paste()
         except Exception:
             original = ""
-            
-        try:
-            import win32gui
-            import pyautogui
-            fw = win32gui.GetForegroundWindow()
-            title = win32gui.GetWindowText(fw)
-            if "Personal Dictation Assistant" in title:
-                print("[Injector] App is focused. Pushing to background with Alt+Esc...")
-                pyautogui.hotkey('alt', 'esc')
-                time.sleep(0.2)
-        except Exception as e:
-            print(f"[Injector] Focus check error: {e}")
 
         try:
+            import pyautogui
             pyperclip.copy(text)
-            print("[Injector] Copied to clipboard. Sending Ctrl+V via SendInput...")
-            time.sleep(0.12)
-            _send_ctrl_v_app()   # Bypasses all keyboard hooks
+            print("[Injector] Copied to clipboard. Sending Ctrl+V...")
+            time.sleep(0.05)
+            pyautogui.hotkey('ctrl', 'v')
             print("[Injector] Ctrl+V sent.")
             _beep(*BEEP_INJECT)
+            time.sleep(0.05)
         except Exception as e:
             print(f"[Injector] Error: {e}")
         finally:
-            def _restore():
-                time.sleep(self._delay)
+            def restore():
                 try:
                     pyperclip.copy(original)
-                except Exception:
+                except:
                     pass
-            threading.Thread(target=_restore, daemon=True).start()
+            threading.Timer(self._delay, restore).start()
 
 
 # ============================================================
@@ -376,14 +362,15 @@ class SemanticRouter:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-    def submit(self, text: str):
-        self._q.put(text)
+    def submit(self, text: str, trigger_source: str):
+        self._q.put((text, trigger_source))
         
     def _run(self):
         while True:
-            text = self._q.get()
-            if text is None:
+            item = self._q.get()
+            if item is None:
                 break
+            text, trigger_source = item
             try:
                 response = self.client.chat.completions.create(
                     model=self.model,
@@ -394,29 +381,32 @@ class SemanticRouter:
                     temperature=0.0
                 )
                 content = response.choices[0].message.content or text
-                self._on_dictation(content)
+                self._on_dictation(content, trigger_source)
             except Exception as e:
                 print(f"[SemanticRouter] LLM routing error: {e}")
-                self._on_dictation(text)
+                self._on_dictation(text, trigger_source)
 
 
 # ============================================================
 #  TRANSCRIBER THREAD
 # ============================================================
 class TranscriberThread(threading.Thread):
-    def __init__(self, model, audio_queue, text_callback, status_callback, cmd_parser):
+    def __init__(self, model, audio_queue, text_callback, status_callback, cmd_parser, trigger_source: str):
         super().__init__(daemon=True)
         self.model           = model
         self.audio_queue     = audio_queue
         self.text_callback   = text_callback
         self.status_callback = status_callback
         self.cmd_parser      = cmd_parser
+        self.trigger_source  = trigger_source
         self.injector        = TextInjector()
         self._stop_event     = threading.Event()
         
-        def _on_dict(t):
-            self.text_callback(t)
-            self.injector.inject(t + " ")
+        def _on_dict(t, source):
+            if source == "gui_button":
+                self.text_callback(t)
+            elif source == "global_hotkey":
+                self.injector.inject(t + " ")
             
         self.router = SemanticRouter(_on_dict, lambda t, s: None)
 
@@ -445,7 +435,7 @@ class TranscriberThread(threading.Thread):
                 text = " ".join(s.text.strip() for s in segs if s.text.strip())
                 if text:
                     if not self.cmd_parser.try_command(text):
-                        self.router.submit(text)
+                        self.router.submit(text, self.trigger_source)
             except Exception as e:
                 print(f"[Transcriber] Error: {e}")
             finally:
@@ -1061,11 +1051,11 @@ class DictationApp(ctk.CTk):
     # ----------------------------------------------------------
     #  Listening toggle
     # ----------------------------------------------------------
-    def _toggle_listening(self):
+    def _toggle_listening(self, source="gui_button"):
         if self.is_listening:
             self._stop_listening()
         else:
-            self._start_listening()
+            self._start_listening(source)
 
     def _hotkey_listener_loop(self):
         # Polls GetAsyncKeyState via keyboard.is_pressed
@@ -1073,12 +1063,11 @@ class DictationApp(ctk.CTk):
         while True:
             try:
                 hk_parts = self._hotkey.split('+')
-                # Map 'esc' -> 'escape', etc if needed, though keyboard handles most
                 if all(keyboard.is_pressed(p) for p in hk_parts):
                     if not held:
                         held = True
                         print("[App] Hotkey physical press detected (Poller)!")
-                        self._hotkey_queue.put(True)
+                        self._hotkey_queue.put("global_hotkey")
                 else:
                     held = False
             except Exception:
@@ -1089,13 +1078,13 @@ class DictationApp(ctk.CTk):
         # Runs in main GUI thread
         try:
             while True:
-                self._hotkey_queue.get_nowait()
-                self._toggle_listening()
+                source = self._hotkey_queue.get_nowait()
+                self._toggle_listening(source)
         except queue.Empty:
             pass
         self.after(100, self._poll_hotkey_queue)
 
-    def _start_listening(self):
+    def _start_listening(self, source="gui_button"):
         self.is_listening = True
         _beep(*BEEP_START)
         self.toggle_btn.configure(
@@ -1119,6 +1108,7 @@ class DictationApp(ctk.CTk):
             text_callback=self._on_text_received,
             status_callback=self._on_status_changed,
             cmd_parser=self.cmd_parser,
+            trigger_source=source,
         )
         self.transcriber_thread.start()
 
